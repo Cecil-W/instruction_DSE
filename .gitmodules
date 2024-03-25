@@ -1,3 +1,0 @@
-[submodule "mlonmcu"]
-	path = mlonmcu
-	url = git@github.com:tum-ei-eda/mlonmcu.git
