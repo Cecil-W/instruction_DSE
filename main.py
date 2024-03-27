@@ -1,267 +1,270 @@
-import os.path
-from copy import deepcopy
+"""Script to evaluate the effectiveness of
+"""
+
 import subprocess
-import logging
+import ast
 
 
-import matplotlib.pyplot as plt
-import matplotlib.axes
 import pandas as pd
-from mlonmcu.context.context import MlonMcuContext
-from mlonmcu.session.session import Run
 
 
 import config
-import seal5_script
 
-logger = logging.getLogger("ISA_DSE")
-
-
-# figure out how to do something simmilar to config gen
-# -> just create another run with a different config
-
-# Config instruction dump; aka get this cli command into python
-# --post analyse_dump -c mlif.toolchain=llvm -f log_instrs --post analyse_instructions -c log_instrs.to_file=1
-# should be fixed, but the data still does not show in the report.df
-# -> the data gets added as a string to the df making it complex to parse, just log to file and read the csv
-
-# Gather instr. data and plot it
-# -> bar plot works, not sure if its the right way to represent the data
-# -> TODO maybe addapt the postprocess to count every instruction not just major op codes
-
-# Change the way i run the benchmarks
-# The goal is to compare multiple instruction sets, so i should configure multiple cpu/arch configs
-# e.g. rv32imafdc + ext1, ext2, ext3
-# and then plot comparisons between the different extensions
-# -> maybe then look at which extensions instructions were most used
-# -> then i can repeat those test for different benchmarks/workloads
-# to see which benchmarks benefit the most from which instructions
-#
-# This works now for any amounts of runs, showing inst. count and rom code size
-# TODO Next step is to show which new instructions were used
-# => pop every std instructions and plot the left over instr.
-
-dynamic_CFG = {
-    "config2cols.limit": ["etiss.arch", "etiss.cpu_arch", "mlif.optimize"],
-    "etiss.arch": "rv32imafdc",
-    "etiss.cpu_arch": "RV32IMACFD",
-    "mlif.toolchain": "llvm",
-    "mlif.optimize": 3,
-    "log_instrs.to_file": 1,
-    # "analyse_instructions.to_df": 1, # this gets saved as a str in the dataframe,
-    # making it mostly useless, parsing it is harder than just reading the csv
-    "analyse_instructions.to_file": 1,
-}
-
-static_CFG = {
-    "config2cols.limit": ["etiss.arch", "etiss.cpu_arch", "mlif.optimize"],
-    "etiss.arch": "rv32imfdc",
-    "etiss.cpu_arch": "RV32IMACFD",
-    "mlif.toolchain": "llvm",
-    "mlif.optimize": 3,
-    "analyse_dump": 1,
-}
-
-POSTPROCESSES_static = ["config2cols", "analyse_dump", "analyse_instructions"]
-
-POSTPROCESSES_dynamic = ["config2cols", "analyse_instructions"]
-
-MLONMCUDir = os.path.expandvars("$MLONMCU_HOME")
-MLONMCULatestSession = MLONMCUDir + "/temp/sessions/latest/"
-MLONMCULatestRun = MLONMCULatestSession + "runs/latest/"
-
-
-def plot_dump(row_count: int = 20):
-    path = MLONMCULatestRun + "dump_counts.csv"
-    instruction_counts = pd.read_csv(path)
-    instruction_counts.fillna("UNKNOWN", inplace=True)
-    # the data is already sorted in descending order
-    instruction_counts.sort_values(by=["Count"], inplace=True)
-    top_n = instruction_counts.head(n=row_count)
-
-    fig, ax = plt.subplots()
-    # plt.subplots_adjust(bottom=0.25)
-    ax.bar(x=top_n["Instruction"], height=top_n["Count"])
-    ax.tick_params(axis="x", labelrotation=90)
-
-    plt.show()
-
-
-def plot_analyse_inst():
-    path = MLONMCULatestRun + "analyse_instructions_majors.csv"
-    instruction_counts = pd.read_csv(path)
-
-    fig, ax = plt.subplots()
-    plt.subplots_adjust(bottom=0.25)
-    ax.bar(x=instruction_counts["Major"], height=instruction_counts["Count"])
-    ax.tick_params(axis="x", labelrotation=90)
-
-    plt.show()
+EXTENSIONS = [
+    "+xseal5testalucvabs16",
+    "+xseal5testalucvabs32",
+    "+xseal5testalucvabs8",
+    "+xseal5testalucvaddnrsi16",
+    "+xseal5testalucvaddnrsi32",
+    "+xseal5testalucvaddnrui16",
+    "+xseal5testalucvaddnrui32",
+    "+xseal5testalucvaddns",
+    "+xseal5testalucvaddnu",
+    "+xseal5testalucvaddrnrsi16",
+    "+xseal5testalucvaddrnrsi32",
+    "+xseal5testalucvaddrnrui16",
+    "+xseal5testalucvaddrnrui32",
+    "+xseal5testalucvaddrns",
+    "+xseal5testalucvaddrnu",
+    "+xseal5testalucvextbs",
+    "+xseal5testalucvextbz",
+    "+xseal5testalucvexths",
+    "+xseal5testalucvexthz",
+    "+xseal5testalucvmaxi1216",
+    "+xseal5testalucvmaxi1232",
+    "+xseal5testalucvmaxi516",
+    "+xseal5testalucvmaxi532",
+    "+xseal5testalucvmaxs16",
+    "+xseal5testalucvmaxs32",
+    "+xseal5testalucvmaxs8",
+    "+xseal5testalucvmaxu16",
+    "+xseal5testalucvmaxu32",
+    "+xseal5testalucvmaxu8",
+    "+xseal5testalucvmini1216",
+    "+xseal5testalucvmini1232",
+    "+xseal5testalucvmini516",
+    "+xseal5testalucvmini532",
+    "+xseal5testalucvmins16",
+    "+xseal5testalucvmins32",
+    "+xseal5testalucvmins8",
+    "+xseal5testalucvminu16",
+    "+xseal5testalucvminu32",
+    "+xseal5testalucvminu8",
+    "+xseal5testalucvsletsi16",
+    "+xseal5testalucvsletsi32",
+    "+xseal5testalucvsletui16",
+    "+xseal5testalucvsletui32",
+    "+xseal5testalucvsubnrsi16",
+    "+xseal5testalucvsubnrsi32",
+    "+xseal5testalucvsubnrui16",
+    "+xseal5testalucvsubnrui32",
+    "+xseal5testalucvsubns",
+    "+xseal5testalucvsubnu",
+    "+xseal5testalucvsubrnrsi16",
+    "+xseal5testalucvsubrnrsi32",
+    "+xseal5testalucvsubrnrui16",
+    "+xseal5testalucvsubrnrui32",
+    "+xseal5testalucvsubrns",
+    "+xseal5testalucvsubrnu",
+    "+xseal5testmaccvmachhns",
+    "+xseal5testmaccvmachhnu",
+    "+xseal5testmaccvmachhrns",
+    "+xseal5testmaccvmachhrnu",
+    "+xseal5testmaccvmacns",
+    "+xseal5testmaccvmacnu",
+    "+xseal5testmaccvmacrns",
+    "+xseal5testmaccvmacrnu",
+    "+xseal5testmaccvmacsi16",
+    "+xseal5testmaccvmacsi32",
+    "+xseal5testmaccvmacui16",
+    "+xseal5testmaccvmacui32",
+    "+xseal5testmaccvmsusi16",
+    "+xseal5testmaccvmsusi32",
+    "+xseal5testmaccvmsuui16",
+    "+xseal5testmaccvmsuui32",
+    "+xseal5testmaccvmulhhns",
+    "+xseal5testmaccvmulhhnu",
+    "+xseal5testmaccvmulhhrns",
+    "+xseal5testmaccvmulhhrnu",
+    "+xseal5testmaccvmulns",
+    "+xseal5testmaccvmulnu",
+    "+xseal5testmaccvmulrns",
+    "+xseal5testmaccvmulrnu",
+    "+grp32v",
+]
 
 
-def plot_compare_runs(report: pd.DataFrame):
-    # TODO Pick back up here, familiarize with df's and select each run
-    # This should be the same as in one of the mlonmcu examples
-    columns = ["ROM code", "Total Instructions"]
-
-    # collumns to plot: ROM code & Total Instructions
-    fig, axs = plt.subplots(1, len(columns))
-    axs: list[matplotlib.axes.Axes]
-    for i, col in enumerate(columns):
-        # axs[i].bar(x=report["config_etiss.arch"].astype(str), height=report[col])
-        report.plot(x="config_etiss.arch", y=col, kind="bar", ax=axs[i])
-
-    plt.show()
-
-
-def run_embench_crc(run: Run, context: MlonMcuContext):
-    run.add_frontend_by_name("embench", context=context)
-    run.add_feature_by_name("log_instrs")
-    run.add_model_by_name("crc32", context=context)
-    run.add_platform_by_name("mlif", context=context)
-    run.add_target_by_name("etiss", context=context)
-    run.add_postprocesses_by_name(
-        [
-            "config2cols",
-            "analyse_dump",
-            # "analyse_instructions",
-        ]  # TODO select static or dynamic instr count depending on config
-    )
-
-
-def run_sine_model(run: Run, context: MlonMcuContext):
-    run.add_frontend_by_name("tflite", context=context)
-    run.add_feature_by_name("log_instrs")
-    run.add_model_by_name("sine_model", context=context)
-    run.add_backend_by_name("tvmaot", context=context)
-    run.add_platform_by_name("mlif", context=context)
-    run.add_target_by_name("etiss", context=context)
-    run.add_postprocesses_by_name(
-        [
-            "config2cols",
-            "analyse_dump",
-            "analyse_instructions",
-        ]  # TODO select static or dynamic instr count depending on config
-    )
-
-
-def config_etiss_arch(arch: str, cpu_arch: str, config: dict):
-    """Copies a config and sets the etiss arch to the specified arch strings"""
-    cfg = deepcopy(config)
-    cfg["etiss.arch"] = arch
-    cfg["etiss.cpu_arch"] = cpu_arch
-    return cfg
-
-
-def run_mlonmcu():
-    with MlonMcuContext() as context:
-        session = context.create_session()
-        cfg_imafdc = config_etiss_arch("rv32imafdc", "RV32IMACFD", static_CFG)
-        crc_run1 = session.create_run(features=[], config=cfg_imafdc)
-        run_embench_crc(crc_run1, context)
-
-        cfg_imafd = config_etiss_arch("rv32imafd", "RV32IMACFD", static_CFG)
-        crc_run2 = session.create_run(features=[], config=cfg_imafd)
-        run_embench_crc(crc_run2, context)
-
-    session.open()
-    session.process_runs(context=context)
-    report = session.get_reports().df
-    session.close()
-
-    print(report)
-    print(report[["Run"]])
-    print(type(report[["Run"]].astype(int)))
-    # plot_dump()
-    plot_compare_runs(report)
-
-
-def generate_m2isar_model(filepath: str):
+def compile_benchmarks(benchmarks: list[str]):
+    """Compiles the given benchmarks"""
+    # TODO look at the commands philipp sent me and update arguments
     subprocess.run(
         [
-            f"./{config.VENV_NAME}/bin/python",
+            "./venv/bin/python",
             "-m",
-            "m2isar.frontends.gen_custom_insns",
-            filepath,
+            "mlonmcu.cli.main",
+            "flow",
+            "compile",
+            *benchmarks,
+            "--target",
+            "etiss",
             "-c",
-        ],  # TODO adapt CLI options for seal5
-        cwd=config.M2_ISA_R_PATH,
-        check=True,
-    )
-
-
-def generate_cdsl_files(filepath: str):
-    subprocess.run(
-        [
-            f"./{config.VENV_NAME}/bin/python",
-            "-m",
-            "m2isar.backends.coredsl2_set.writer",
-            filepath,
+            "mlif.toolchain=llvm",
+            "-c",
+            "mlif.extend_attrs=1",
+            "-c",
+            "mlif.strip_strings=1",
+            "--config-gen",
+            "mlif.global_isel=1",
+            "--post",
+            "config2cols",
+            "-c",
+            "config2cols.limit=mlif.global_isel,auto_vectorize.custom_unroll",
+            "-v",
+            "--parallel",
+            "-c",
+            f"llvm.install_dir={config.LLVM_PATH}",
+            "--post",
+            "analyse_dump",
+            "--post",
+            "rename_cols",
+            "-c",
+            "rename_cols.mapping={'config_mlif.global_isel':'GIsel',"
+            "'config_auto_vectorize.custom_unroll':'Unroll'}",
+            "--post",
+            "filter_cols",
+            "-c",
+            "filter_cols.keep=Model,ROM code,GIsel,Reason,DumpCountsGen,Total Instructions,Unroll",
+            "-c",
+            "mlif.strip_strings=0",
+            "-c",
+            "analyse_dump.to_df=1",
+            "-c",
+            f"etissvp.script={config.ETISS_RUN_HELPER}",
+            "--post",
+            "compare_rows",
+            "-f",
+            "auto_vectorize",
+            "--config-gen3",
+            "auto_vectorize.custom_unroll=1",
+            "--config-gen2",
+            f"etiss.attr=\"+m,{','.join(EXTENSIONS)}\"",
         ],
-        cwd=config.M2_ISA_R_PATH,
         check=True,
+        cwd=config.MLONMCU_PATH,
     )
 
 
-def generate_etiss_patch(model_path: str):
-    subprocess.run(
-        [
-            f"./{config.VENV_NAME}/bin/python",
-            "-m",
-            "m2isar.backends.etiss.writer",
-            model_path,
-            "--separate",
-            "--static-scalars",
-        ],
-        cwd=config.M2_ISA_R_PATH,
-        check=True,
-    )
+def remove_unused_extensions(
+    benchmarks: list[str], new_run: bool = True
+) -> tuple[dict[str, int], list[str]]:
+    """
+    Compiles the given benchmarks and returns a list with used instructions and their static count
+    Also returns a list of benchmarks which don't make use of the new instructions
+    Return: (used_instructions, resultless_benchmarks)"""
+    if new_run:
+        compile_benchmarks(benchmarks)
+
+    report = pd.read_csv(config.MLONMCU_HOME + "/temp/sessions/latest/report.csv")
+    resultless_benchmarks = report.loc[report["DumpCountsGen"] == "{}"]["Model"]
+
+    used_instructions: dict[str, int] = {}
+    for series in report["DumpCountsGen"]:
+        d: dict = ast.literal_eval(series)
+        # Update the usage count of the instructions
+        for instruction, count in d.items():
+            if instruction in used_instructions:
+                used_instructions[instruction] += count
+            else:
+                used_instructions[instruction] = count
+
+    return (used_instructions, resultless_benchmarks.to_list())
 
 
-def patch_etiss(model_path: str):
-    # TODO create a folder in this dir to copy files around, or use TMP
-    # TODO cwd depends on where i want to save the tmp files
-    subprocess.run(
-        [
-            "cp",
-            "-r",
-            model_path + "/gen_output/top/*",
-            config.ETISS_PATH + "/ArchImpl/",
-        ],
-        cwd="TODO",
-        check=True,
-    )
+def instruction_to_extension(instructions: list[str]):
+    """Returns the coresponding extensions for each instruction"""
+    extensions: list[str] = []
+    for i in instructions:
+        for ext in EXTENSIONS:
+            if i.replace(".", "") in ext:
+                extensions.append(ext)
 
-    subprocess.run(
-        ["git", "restore", "ArchImpl/RV32IMACFD/RV32IMACFDArchSpecificImp.cpp"],
-        cwd=config.ETISS_PATH,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "restore", "ArchImpl/RV64IMACFD/RV64IMACFDArchSpecificImp.cpp"],
-        cwd=config.ETISS_PATH,
-        check=True,
-    )
-    # TODO figure out if mlonmcu rebuilds etiss, or if i need to do it here
-    subprocess.run(
-        ["make", "-C", "build", "-j$(nproc)", "install"],
-        cwd=config.ETISS_PATH,
-        check=True,
-    )
+    return extensions
 
 
-def patch_llvm():
-    seal5_script.patch()
+def compare_static_counts(new_run: bool, benchmarks: list[str], extensions: list[str]):
+    """
+    Runs a list of benchmarks, with and without the extensions,
+    and compares the static code size
+    """
+    if new_run:
+        subprocess.run(
+            [
+                "./venv/bin/python",
+                "-m",
+                "mlonmcu.cli.main",
+                "flow",
+                "run",
+                *benchmarks,
+                "--target",
+                "etiss",
+                "-c",
+                "mlif.toolchain=llvm",
+                "-c",
+                "mlif.extend_attrs=1",
+                "--config-gen",
+                "mlif.global_isel=1",
+                "--post",
+                "config2cols",
+                "-c",
+                "config2cols.limit=mlif.global_isel,auto_vectorize.custom_unroll",
+                "-v",
+                "--parallel",
+                "-c",
+                f"llvm.install_dir={config.LLVM_PATH}",
+                "--post",
+                "analyse_dump",
+                "--post",
+                "rename_cols",
+                "-c",
+                "rename_cols.mapping={'config_mlif.global_isel':'GIsel',"
+                "'config_auto_vectorize.custom_unroll':'Unroll'}",
+                "--post",
+                "filter_cols",
+                "-c",
+                "filter_cols.keep=Model,ROM code,GIsel,"
+                "Reason,DumpCountsGen,Total Instructions,Unroll",
+                "-c",
+                "mlif.strip_strings=0",
+                "-c",
+                "analyse_dump.to_df=1",
+                "-c",
+                f"etissvp.script={config.ETISS_RUN_HELPER}",
+                "--post",
+                "compare_rows",
+                "-f",
+                "auto_vectorize",
+                "--config-gen3",
+                "auto_vectorize.custom_unroll=1",
+                "--config-gen2",
+                'etiss.attr="+m"',
+                "--config-gen2",
+                f"etiss.attr=\"+m,{','.join(extensions)}\"",
+            ],
+            check=True,
+            cwd=config.MLONMCU_PATH,
+        )
+    report = pd.read_csv(config.MLONMCU_HOME + "/temp/sessions/latest/report.csv")
 
 
 def main():
-    generate_m2isar_model("TODO")
-    generate_cdsl_files("TODO")
-    generate_etiss_patch("TODO")
-    patch_etiss("TODO")
-    patch_llvm()
-    run_mlonmcu()
+    """Main entry"""
+    benchmarks = ["coremark", "dhrystone"]
+    used_instructions, useless_benchmarks = remove_unused_extensions(benchmarks, True)
+    # remove unused benchmarks
+    new_benchmarks = [bench for bench in benchmarks if bench not in useless_benchmarks]
+
+    # compare_static_counts(True, benchmarks, new_extensions)
 
 
 if __name__ == "__main__":
-    run_mlonmcu()
+    main()

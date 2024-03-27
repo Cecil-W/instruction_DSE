@@ -1,10 +1,13 @@
-"""Paths to the used programms.
-"""
+"""Paths to the used programms."""
+
+import os.path
+
+MLONMCU_HOME = os.path.expandvars("$MLONMCU_HOME")
 
 LLVM_PATH = "/home/cecil/Documents/llvm-project/build"
 ETISS_PATH = "/home/cecil/Documents/etissVK"
 ETISS_RUN_HELPER = ETISS_PATH + "/build/installed/bin/run_helper.sh"
-MLONMCU_PATH = "~/Documents/mlonmcu"
+MLONMCU_PATH = "/home/cecil/Documents/mlonmcu"
 
 # Currently not needed
 VENV_NAME = "venv"
