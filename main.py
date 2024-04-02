@@ -111,6 +111,66 @@ def instruction_to_extension(instructions: list[str]):
     return extensions
 
 
+def validate_benchmarks(benchmarks: list[str], extensions: list[str]):
+    """Calls MLonMCU with the validate feature and returns a list with all passing benchmarks"""
+    # running every benchmark with the extensions
+    subprocess.run(
+        [
+            "python3",
+            "-m",
+            "mlonmcu.cli.main",
+            "flow",
+            "run",
+            *benchmarks,
+            "--target",
+            "etiss",
+            "-c",
+            "mlif.toolchain=llvm",
+            "-c",
+            "mlif.extend_attrs=1",
+            "--config-gen",
+            "mlif.global_isel=1",
+            "--post",
+            "config2cols",
+            "-c",
+            "config2cols.limit=mlif.global_isel,auto_vectorize.custom_unroll",
+            # "-v",
+            "--parallel",
+            "-c",
+            f"llvm.install_dir={config.LLVM_PATH}",
+            "--post",
+            "rename_cols",
+            "-c",
+            "rename_cols.mapping={'config_mlif.global_isel':'GIsel',"
+            "'config_auto_vectorize.custom_unroll':'Unroll'}",
+            "--post",
+            "filter_cols",
+            "-c",
+            "filter_cols.keep=Model,ROM code,GIsel,Reason,Total"
+            "Instructions,Unroll,Validation",
+            "-c",
+            "mlif.strip_strings=0",
+            "-c",
+            f"etissvp.script={config.ETISS_RUN_HELPER}",
+            "-f",
+            "auto_vectorize",
+            "--config-gen3",
+            "auto_vectorize.custom_unroll=1",
+            "--config-gen2",
+            f"etiss.attr=\"+m,{','.join(extensions)}\"",
+            "-f",
+            "validate",
+        ],
+        check=True,
+        cwd=config.MLONMCU_PATH,
+    )
+    # then, remove failing benchmarks
+    report = pd.read_csv(config.MLONMCU_HOME + "/temp/sessions/latest/report.csv")
+    passing_benchmarks = report.loc[report["Validation"] == True]["Model"]
+
+    return passing_benchmarks.to_list()
+
+
 def compare_static_counts(
     benchmarks: list[str], extensions: list[str], new_run: bool = True
 ):
@@ -274,14 +334,17 @@ def main():
     # used_benchmarks = [
     #     bench for bench in benchmarks if bench not in ineffective_benchmarks
     # ]
+
+    validate_benchmarks(benchmarks2, EXTENSIONS)
+
     # # TODO i could add a validate run before or after the static count
     # used_extensions = instruction_to_extension(list(used_instructions.keys()))
     # static_report = compare_static_counts(used_benchmarks, used_extensions)
     # dynamic_report = compare_dynamic_counts(used_benchmarks, used_extensions)
-    dynamic_report = compare_dynamic_counts(benchmarks, EXTENSIONS, False)
-    plot.compare_relative_inst_count(dynamic_report)
-    # plot.instruction_count(data=used_instructions)
-    plot.instruction_count_across_benchmarks(df=dynamic_report)
+    # dynamic_report = compare_dynamic_counts(benchmarks, EXTENSIONS, False)
+    # plot.compare_relative_inst_count(dynamic_report)
+    # # plot.instruction_count(data=used_instructions)
+    # plot.instruction_count_across_benchmarks(df=dynamic_report)
 
 
 def test_plots():
@@ -290,5 +353,5 @@ def test_plots():
 
 
 if __name__ == "__main__":
-    # main()
-    test_plots()
+    main()
+    # test_plots()
