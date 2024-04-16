@@ -11,7 +11,7 @@ import mlonmcu_commands as cmds
 import plot
 
 
-logger = logging.getLogger("ISA-DSE ")
+logger = logging.getLogger("ISA DSE")
 
 
 def count_instructions(report: pd.DataFrame) -> dict[str, int]:
@@ -55,56 +55,79 @@ def main():
     parser = argparse.ArgumentParser(description="ISA DSE", add_help=True)
     parser.add_argument(
         "flow",
-        choices=["compile", "validate", "runtime"],
+        choices=["compile", "validate", "static_dump", "trace"],
         nargs="+",
         help="Select DSE flow steps that will be performed in succsesion",
     )
     parser.add_argument(
         "-b",
         "--benchmarks",
-        choices=["coremark", "dhrystone", "embench", "all"],
+        choices=config.BENCHMARKS + ["all"],
         nargs="+",
         help="Selected benchmarks",
     )
     parser.add_argument("-p", "--plot", choices=["compare_inst_count"], nargs="+")
     parser.add_argument(
-        "-s",
-        "--size-factor",
-        help="Weigth that influences the importance of "
-        "static code size when selecting instructions",
+        "-u",
+        "--minimum-usage",
+        help="Filter out new instructions that are below the minimum relative count",
     )
     parser.add_argument(
         "-r",
-        "--runtime-factor",
-        help="Weigth that influences the importance of runtime when selecting instructions",
+        "--minimum-relative-rom-size",
+        help="Filter out Benchmarks that don't improve by x%",
+        type=float,
     )
+    # parser.add_argument(
+    #     "-r",
+    #     "--runtime-factor",
+    #     help="Weigth that influences the importance of runtime when selecting instructions",
+    # )
     args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO)
 
     # set the initial benchmarks
     benchmarks = args.benchmarks
-    if benchmarks == "all":
-        benchmarks = ["coremark", "dhrystone", "embench"]
+    if "all" in benchmarks:
+        benchmarks = config.BENCHMARKS
         # TODO add the other benchmarks
     logger.info("Benchmarks: %s", benchmarks)
 
-    # if "compile" in args.flow or "runtime" in args.flow:
-    compile_report = cmds.compile_benchmarks(benchmarks)
-    new_benchmarks = compile_report.loc[compile_report["DumpCountsGen"] != "{}"][
-        "Model"
-    ]
-    unused_benchmarks = compile_report.loc[compile_report["DumpCountsGen"] == "{}"][
-        "Model"
-    ]
-    if not unused_benchmarks.empty:
-        logger.info("Discarding Benchmarks: %s", unused_benchmarks.tolist())
-    used_instructions = count_instructions(compile_report)
-    used_extensions = instruction_to_extension(list(used_instructions.keys()))
+    if "compile" in args.flow or "runtime" in args.flow:
+        compile_report = cmds.compile_benchmarks(benchmarks)
+
+        if args.minimum_relative_rom_size:
+            above_threshold: set[str] = set(
+                compile_report.loc[
+                    (compile_report["ROM code (rel.)"] > args.minimum_relative_rom_size)
+                    & (compile_report["DumpCountsGen"] != "{}")
+                ]["Model"]
+            )
+
+            removed_benchmarks = []
+            for b in above_threshold:
+                removed_benchmarks.append(b)
+                benchmarks.remove(b)
+            if removed_benchmarks:
+                logger.info(
+                    "Discarding Benchmarks that didn't meet rom size threshold: %s",
+                    removed_benchmarks,
+                )
+        used_instructions = count_instructions(compile_report)
+        used_extensions = instruction_to_extension(list(used_instructions.keys()))
+
+    if args.minimum_usage:
+        # TODO filter out instructions that are barely utilized
+        ...
 
     if "runtime" in args.flow:
         report = cmds.run_analyse_instructions(
-            benchmarks=new_benchmarks.tolist(),
+            benchmarks=benchmarks,
             extensions=used_extensions,
         )
+        if "compare_inst_count" in args.plot:
+            plot.instruction_count_across_benchmarks(report, dynamic_count=True)
 
 
 def test_plots():
