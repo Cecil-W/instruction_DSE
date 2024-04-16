@@ -37,7 +37,8 @@ def analyse_inst(df: pd.DataFrame):
 
 
 def instruction_count(data: dict):
-    """Plots data.key against data.value"""
+    """Plots data.key against data.value\n
+    Used to plot the instruction count if its supplied as a dict"""
     fig = plt.figure()
     ax: matplotlib.axes.Axes = fig.subplots()  # type: ignore
     x, y = zip(*sorted(data.items(), key=lambda x: x[1]))
