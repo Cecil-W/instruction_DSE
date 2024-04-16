@@ -77,18 +77,12 @@ def instruction_count_across_benchmarks(df: pd.DataFrame, dynamic_count: bool = 
     df2 = df[df[col_name] != "{}"]
     df2.loc[:, col_name] = df2[col_name].apply(ast.literal_eval)
 
-    # TODO untested, maybe need to add .to_list() in json_normalize
-    # new_df = pd.DataFrame(data=pd.json_normalize(df2[col_name]), index=df2["model"])# type:ignore
     new_df = pd.DataFrame(df2[col_name].tolist(), index=df2["Model"])
     print(new_df)
     # fig, axes = plt.subplots(nrows=1, ncols=2)
 
-    ax = new_df.plot.barh(stacked=True)
-    # new_df.plot.barh(stacked=True, ax=axes[0])
-    # new_df.T.plot.barh(stacked=True, ax=axes[1])
-
-    # for bars in ax.containers:
-    #     ax.bar_label(bars)
+    ax = new_df.T.plot.barh(stacked=True)
+    ax.set_ylabel("Instructions")
     plt.show()
 
 

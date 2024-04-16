@@ -14,6 +14,8 @@ VENV_NAME = "venv"
 M2_ISA_R_PATH = "~/Documents/M2-ISA-R"
 SEAL5_PATH = "~/Documents/seal5"
 
+BENCHMARKS = ["coremark", "dhrystone", "embench"]
+
 EXTENSIONS = [
     "+xseal5testalucvabs16",
     "+xseal5testalucvabs32",
