@@ -75,7 +75,7 @@ def main():
     parser.add_argument(
         "-r",
         "--minimum-relative-rom-size",
-        help="Filter out Benchmarks that don't improve by x%",
+        help="Filter out Benchmarks that don't improve by x percent",
         type=float,
     )
     # parser.add_argument(
@@ -91,31 +91,47 @@ def main():
     benchmarks = args.benchmarks
     if "all" in benchmarks:
         benchmarks = config.BENCHMARKS
-        # TODO add the other benchmarks
+        benchmarks.remove("embench")  # removing duplicate
+        # same woulb be needed for taclebench
     logger.info("Benchmarks: %s", benchmarks)
 
     if "compile" in args.flow or "runtime" in args.flow:
-        compile_report = cmds.compile_benchmarks(benchmarks)
+        compile_report, error = cmds.compile_benchmarks(benchmarks)
+
+        # removing failing benchmarks
+        if error:
+            failing_benchmarks = compile_report.loc[
+                compile_report["Reason"] == "AssertionError @ COMPILE"
+            ]["Model"]
+
+            logger.info(
+                "Discarding failing Benchmarks: %s",
+                failing_benchmarks.unique().tolist(),
+            )
+            compile_report.drop(failing_benchmarks.index.unique(), inplace=True)
+            if compile_report.empty:
+                raise RuntimeError("Every Benchmark failed")
 
         if args.minimum_relative_rom_size:
-            above_threshold: set[str] = set(
-                compile_report.loc[
-                    (compile_report["ROM code (rel.)"] > args.minimum_relative_rom_size)
-                    & (compile_report["DumpCountsGen"] != "{}")
-                ]["Model"]
-            )
+            above_threshold = compile_report.loc[
+                (compile_report["ROM code (rel.)"] > args.minimum_relative_rom_size)
+                & (compile_report["DumpCountsGen"] != "{}")
+            ]["Model"].unique()
 
-            removed_benchmarks = []
             for b in above_threshold:
-                removed_benchmarks.append(b)
                 benchmarks.remove(b)
-            if removed_benchmarks:
+            if above_threshold:
                 logger.info(
-                    "Discarding Benchmarks that didn't meet rom size threshold: %s",
-                    removed_benchmarks,
+                    "Discarding Benchmarks that didn't meet relative rom decrease threshold: %s",
+                    above_threshold.tolist(),
                 )
-        used_instructions = count_instructions(compile_report)
-        used_extensions = instruction_to_extension(list(used_instructions.keys()))
+
+        instruction_usage = count_instructions(compile_report)
+        used_extensions = instruction_to_extension(list(instruction_usage.keys()))
+        runtime = False
+
+    # if args.inst_count:
+    #     plot.instruction_count(instruction_usage)
 
     if args.minimum_usage:
         # TODO filter out instructions that are barely utilized
@@ -126,8 +142,13 @@ def main():
             benchmarks=benchmarks,
             extensions=used_extensions,
         )
-        if "compare_inst_count" in args.plot:
-            plot.instruction_count_across_benchmarks(report, dynamic_count=True)
+        runtime = True
+
+    if "compare_inst_count" in args.plot:
+        if runtime:
+            plot.instruction_count_across_benchmarks(report, dynamic_count=runtime)
+        else:
+            plot.instruction_count_across_benchmarks(compile_report, runtime)
 
 
 def test_plots():
