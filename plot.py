@@ -36,63 +36,83 @@ def analyse_inst(df: pd.DataFrame):
     plt.show()
 
 
-def instruction_count(data: dict):
-    """Plots data.key against data.value\n
-    Used to plot the instruction count if its supplied as a dict"""
-    fig = plt.figure()
-    ax: matplotlib.axes.Axes = fig.subplots()  # type: ignore
-    x, y = zip(*sorted(data.items(), key=lambda x: x[1]))
-    ax.bar(x=x, height=y)
-    # ax.plot("Instruction", "Count", data=data)
-    plt.show()
-
-
-def instruction_count_across_benchmarks_wip(
-    df: pd.DataFrame, dynamic_count: bool = True
-):
-    """df: DataFrame containing the instruction count across models
-    This is currently not working as the bars are not stacked"""
-    col_name = "TraceCountsGen" if dynamic_count else "DumpCountsGen"
+def combined_instruction_count(df: pd.DataFrame):
+    """Sums up the Instruction counts and plots them"""
+    col_name = "TraceCountsGen" if "TraceCountsGen" in df.columns else "DumpCountsGen"
     # Removing Benchmarks with no generated instructions and turning the "dicts" into real dicts
-    df2 = df[df[col_name] != "{}"]
+    df2 = df[(df[col_name] != "{}") & (df[col_name].notna())]
     df2.loc[:, col_name] = df2[col_name].apply(ast.literal_eval)
 
-    fig = plt.figure()
-    ax: matplotlib.axes.Axes = fig.subplots()  # type: ignore
-
-    for i, row in df2.iterrows():
-        instr_count: dict[str, int] = row[col_name]
-        instructions, counts = zip(*sorted(instr_count.items(), key=lambda x: x[1]))
-        ax.barh(y=instructions, width=counts, label=row["Model"])
-
-    ax.legend(loc="upper right")
-
+    instruction_counts = (
+        pd.DataFrame(df2[col_name].tolist(), index=df2["Model"])
+        .fillna(0)
+        .astype("int32")
+        .sum()
+        .sort_values()
+    )
+    ax = instruction_counts.plot.barh()
+    # new_df.plot.barh()
+    ax.set_xscale("log")
+    ax.bar_label(ax.containers[0], padding=4)  # type: ignore
+    ax.set_xlim(left=None, right=3000)
+    plt.subplots_adjust(left=0.2)
     plt.show()
 
 
-def instruction_count_across_benchmarks(df: pd.DataFrame, dynamic_count: bool = True):
+def instruction_count_across_benchmarks(df: pd.DataFrame):
     """df: DataFrame containing the instruction count across models"""
-    col_name = "TraceCountsGen" if dynamic_count else "DumpCountsGen"
+    col_name = "TraceCountsGen" if "TraceCountsGen" in df.columns else "DumpCountsGen"
     # Removing Benchmarks with no generated instructions and turning the "dicts" into real dicts
-    df2 = df[df[col_name] != "{}"]
+    df2 = df[(df[col_name] != "{}") & (df[col_name].notna())]
     df2.loc[:, col_name] = df2[col_name].apply(ast.literal_eval)
 
-    new_df = pd.DataFrame(df2[col_name].tolist(), index=df2["Model"])
-    print(new_df)
+    instructions_per_model = (
+        pd.DataFrame(df2[col_name].tolist(), index=df2["Model"])
+        .fillna(0)
+        .astype("int32")
+    )
+    # Sorting the columns by their sums
+    sums = instructions_per_model.sum()
+    instructions_per_model = instructions_per_model[
+        sums.sort_values(ascending=False).index
+    ]
+    # side by side for comparison
     # fig, axes = plt.subplots(nrows=1, ncols=2)
+    # new_df.plot.barh(stacked=True, ax=axes[0])
+    # new_df.T.plot.barh(stacked=True, ax=axes[1])
+    # axes[1].set_ylabel("Instructions")
+    ax = instructions_per_model.plot.barh(stacked=True, figsize=(10, 7))
+    # ax.set_xscale("log")
+    ax.set_ylabel("Benchmarks")
+    ax.legend(title="Instructions")
+    # plt.subplots_adjust(left=0.15)
+    plt.tight_layout(pad=1)
 
-    ax = new_df.T.plot.barh(stacked=True)
-    ax.set_ylabel("Instructions")
     plt.show()
 
 
 def compare_relative_inst_count(df: pd.DataFrame):
-    """Plots the relative Instruction count for each benchmark"""
-    bench_instr_count = df.loc[df["Total Instructions (rel.)"] != 1.0]
-    ax = df.plot.bar(x="Model", y="Total Instructions (rel.)", rot=0)
+    """Plots either the relative Instruction count or the relative ROM size for each benchmark"""
+    # bench_instr_count = df.loc[df["Total Instructions (rel.)"] != 1.0]
+    # ax = df.plot.bar(x="Model", y="Total Instructions (rel.)", rot=90)
+    # plt.show()
+
+    col_name = (
+        "Total Instructions (rel.)"
+        if "Total Instructions (rel.)" in df.columns
+        else "ROM code (rel.)"
+    )
+    df2 = df.iloc[1::2].sort_values(by=col_name, ascending=True)
+    ax = df2.plot.barh(x="Model", y=col_name)
+    ax.set_xlim(df2[col_name].min() - 0.1, df2[col_name].max() + 0.1)
+    ax.bar_label(ax.containers[0], fmt="%.2f")
+    plt.axvline(1, color="black", ls="--", lw=1)
+    plt.tight_layout(pad=1)
+
     plt.show()
 
 
+# Not used
 def compare_runs(report: pd.DataFrame):
     # This should be the same as in one of the mlonmcu examples
     columns = ["ROM code", "Total Instructions"]

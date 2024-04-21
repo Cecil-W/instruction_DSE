@@ -9,6 +9,7 @@ import pandas as pd
 import config
 import mlonmcu_commands as cmds
 import plot
+import table
 
 
 logger = logging.getLogger("ISA DSE")
@@ -41,23 +42,14 @@ def instruction_to_extension(instructions: list[str]):
     return extensions
 
 
-def validate(benchmarks: list[str], extensions: list[str]):
-    """filters out failing runs"""
-    # then, remove failing benchmarks
-    report = cmds.validate_benchmarks(benchmarks, extensions)
-    passing_benchmarks = report.loc[report["Validation"] is True]["Model"]
-
-    return passing_benchmarks.to_list()
-
-
 def main():
     """Main app entry"""
     parser = argparse.ArgumentParser(description="ISA DSE", add_help=True)
     parser.add_argument(
-        "flow",
-        choices=["compile", "validate", "static_dump", "trace"],
-        nargs="+",
-        help="Select DSE flow steps that will be performed in succsesion",
+        "steps",
+        choices=["compile", "validate", "traces", "none"],
+        # nargs="+",
+        help="Select DSE steps that will be performed in succsesion",
     )
     parser.add_argument(
         "-b",
@@ -66,17 +58,36 @@ def main():
         nargs="+",
         help="Selected benchmarks",
     )
-    parser.add_argument("-p", "--plot", choices=["compare_inst_count"], nargs="+")
     parser.add_argument(
-        "-u",
-        "--minimum-usage",
-        help="Filter out new instructions that are below the minimum relative count",
+        "-p",
+        "--plot",
+        choices=[
+            "benchmark_inst_count",
+            "combined_inst_count",
+            "compare_relative_inst_count",
+        ],
+        nargs="*",
     )
     parser.add_argument(
-        "-r",
-        "--minimum-relative-rom-size",
-        help="Filter out Benchmarks that don't improve by x percent",
+        "-r", "--report", help="Path to to the report that should be used for plotting"
+    )
+    parser.add_argument(  # TODO add
+        "-u",
+        "--minimum-usage",
+        help="Filter out custom instructions that are below a given amount",
+    )
+    parser.add_argument(
+        "-c",
+        "--minimum-code-size-improvement",
+        help="Filter out Benchmarks that don't improve by "
+        "the given percentage after the compile step",
         type=float,
+    )
+    parser.add_argument(
+        "-l",
+        "--latex",
+        choices=["relative_inst_count"],
+        help="Uses the given function to printa latex table",
     )
     # parser.add_argument(
     #     "-r",
@@ -87,68 +98,124 @@ def main():
 
     logging.basicConfig(level=logging.INFO)
 
+    if "none" in args.steps:
+        if "report" not in vars(args):
+            parser.error("To use the plot step, the path to a report must be supplied")
+        report = pd.read_csv(args.report)
+        benchmarks = []
+
     # set the initial benchmarks
     benchmarks = args.benchmarks
-    if "all" in benchmarks:
+    if benchmarks and "all" in benchmarks:
         benchmarks = config.BENCHMARKS
         benchmarks.remove("embench")  # removing duplicate
         # same woulb be needed for taclebench
+    elif benchmarks and "embench" in benchmarks:
+        benchmarks.remove("embench")
+        benchmarks.extend(config.EMBENCH)
     logger.info("Benchmarks: %s", benchmarks)
 
-    if "compile" in args.flow or "runtime" in args.flow:
-        compile_report, error = cmds.compile_benchmarks(benchmarks)
+    if "compile" in args.steps or "validate" in args.steps or "traces" in args.steps:
+        report, error = cmds.compile_benchmarks(benchmarks)
 
-        # removing failing benchmarks
-        if error:
-            failing_benchmarks = compile_report.loc[
-                compile_report["Reason"] == "AssertionError @ COMPILE"
-            ]["Model"]
+    # removing failing benchmarks
+    if "Reason" in report.columns:
+        # collect failing benchmarks
+        failing_benchmarks = report.loc[report["Reason"] == "AssertionError @ COMPILE"][
+            "Model"
+        ]
 
-            logger.info(
-                "Discarding failing Benchmarks: %s",
-                failing_benchmarks.unique().tolist(),
-            )
-            compile_report.drop(failing_benchmarks.index.unique(), inplace=True)
-            if compile_report.empty:
-                raise RuntimeError("Every Benchmark failed")
-
-        if args.minimum_relative_rom_size:
-            above_threshold = compile_report.loc[
-                (compile_report["ROM code (rel.)"] > args.minimum_relative_rom_size)
-                & (compile_report["DumpCountsGen"] != "{}")
-            ]["Model"].unique()
-
-            for b in above_threshold:
+        logger.info(
+            "Discarding Benchmarks that don't compile: %s",
+            failing_benchmarks.unique().tolist(),
+        )
+        if not "none" in args.steps:
+            for b in failing_benchmarks.unique():
                 benchmarks.remove(b)
-            if above_threshold:
-                logger.info(
-                    "Discarding Benchmarks that didn't meet relative rom decrease threshold: %s",
-                    above_threshold.tolist(),
-                )
 
-        instruction_usage = count_instructions(compile_report)
-        used_extensions = instruction_to_extension(list(instruction_usage.keys()))
-        runtime = False
+        # remove failing benchmarks from df, not sure if i need this anymore
+        report.drop(failing_benchmarks.index.unique(), inplace=True)
+        if report.empty:
+            raise RuntimeError("Every Benchmark failed")
+
+    # remove benchmarks which dont use new instructions
+    if "compile" in args.steps or "validate" in args.steps or "traces" in args.steps:
+        useless_benchmarks = report.iloc[1::2].loc[report["DumpCountsGen"] == "{}"][
+            "Model"
+        ]
+        for b in useless_benchmarks:
+            benchmarks.remove(b)
+        logger.info(
+            "Removing Benchmarks that don't use the new Instructions: %s",
+            useless_benchmarks.tolist(),
+        )
+
+        # remove unused extensions
+        instruction_count = count_instructions(report)
+        used_extensions = instruction_to_extension(list(instruction_count.keys()))
+
+    if args.minimum_code_size_improvement:
+        above_threshold = report.loc[
+            (report["ROM code (rel.)"] > args.minimum_relative_rom_size)
+            & (report["DumpCountsGen"] != "{}")
+        ]["Model"].unique()
+
+        for b in above_threshold:
+            benchmarks.remove(b)
+        if above_threshold:
+            logger.info(
+                "Discarding Benchmarks that didn't meet relative rom decrease threshold: %s",
+                above_threshold.tolist(),
+            )
+
+    logger.info("Benchmarks after the compile stage: %s", benchmarks)
+
+    if "validate" in args.steps or "traces" in args.steps:
+        validate_report, return_code = cmds.validate_benchmarks(
+            benchmarks, used_extensions
+        )
+        if return_code != 0:
+            invalid_benchmarks = validate_report.loc[
+                (validate_report["Validation"] == False)  # ignore
+                | (validate_report["Validation"].isna())
+            ]["Model"].unique()
+            # Pylint suggests to use "is" instead of "==" but this causes the wrong behavior
+            logger.info(
+                "Discarding invalid Benchmarks: %s", invalid_benchmarks.tolist()
+            )
+            for b in invalid_benchmarks:
+                benchmarks.remove(b)
+        else:
+            logger.info("All benchmarks validated succesfuly!")
 
     # if args.inst_count:
     #     plot.instruction_count(instruction_usage)
 
-    if args.minimum_usage:
-        # TODO filter out instructions that are barely utilized
-        ...
-
-    if "runtime" in args.flow:
+    if "traces" in args.steps:
         report = cmds.run_analyse_instructions(
             benchmarks=benchmarks,
             extensions=used_extensions,
         )
-        runtime = True
 
-    if "compare_inst_count" in args.plot:
-        if runtime:
-            plot.instruction_count_across_benchmarks(report, dynamic_count=runtime)
-        else:
-            plot.instruction_count_across_benchmarks(compile_report, runtime)
+    if args.minimum_usage:
+        # logger.info("Minimum usage--------------")
+        # TODO filter out instructions that are barely utilized, percentage of total instructions
+        ...
+        logger.info("Discarded instructions: %s")
+        # TODO used_extensions.remove()
+    logger.info("Final Instructions")
+
+    if args.plot and "combined_inst_count" in args.plot:
+        plot.combined_instruction_count(report)
+
+    if args.plot and "benchmark_inst_count" in args.plot:
+        plot.instruction_count_across_benchmarks(report)
+
+    if args.plot and "compare_relative_inst_count" in args.plot:
+        plot.compare_relative_inst_count(report)
+
+    if args.latex and "relative_inst_count" in args.latex:
+        table.relative_inst_count(report)
 
 
 def test_plots():

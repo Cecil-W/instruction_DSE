@@ -77,7 +77,7 @@ def compile_benchmarks(benchmarks: list[str]):
 def validate_benchmarks(benchmarks: list[str], extensions: list[str]):
     """Calls MLonMCU with the validate feature and returns a list with all passing benchmarks"""
     # running every benchmark with the extensions
-    subprocess.run(
+    result = subprocess.run(
         [
             "python3",
             "-m",
@@ -124,11 +124,11 @@ def validate_benchmarks(benchmarks: list[str], extensions: list[str]):
             "-f",
             "validate",
         ],
-        check=True,
+        check=False,
         cwd=config.MLONMCU_PATH,
     )
     report = pd.read_csv(config.MLONMCU_HOME + "/temp/sessions/latest/report.csv")
-    return report
+    return (report, result.returncode)
 
 
 def run_benchmarks(benchmarks: list[str], extensions: list[str], new_run: bool = True):

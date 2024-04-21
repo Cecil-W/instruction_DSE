@@ -187,5 +187,4 @@ EXTENSIONS = [
     "+xseal5testmaccvmulnu",
     "+xseal5testmaccvmulrns",
     "+xseal5testmaccvmulrnu",
-    "+grp32v",
 ]
