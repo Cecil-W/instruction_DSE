@@ -49,7 +49,7 @@ def main():
         "steps",
         choices=["compile", "validate", "traces", "none"],
         # nargs="+",
-        help="Select DSE steps that will be performed in succsesion",
+        help="Select upto which DSE steps the programm should run",
     )
     parser.add_argument(
         "-b",
@@ -153,6 +153,8 @@ def main():
         # remove unused extensions
         instruction_count = count_instructions(report)
         used_extensions = instruction_to_extension(list(instruction_count.keys()))
+
+        logger.info("Continuing with Instructions: %s", list(instruction_count.keys()))
 
     if args.minimum_code_size_improvement:
         above_threshold = report.loc[
